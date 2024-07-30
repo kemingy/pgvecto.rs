@@ -7,7 +7,7 @@ use nalgebra::{Dim, Dyn};
 use num_traits::{Float, One, ToPrimitive, Zero};
 use rand::{thread_rng, Rng};
 
-use super::THETA_LOG_DIM;
+use super::{THETA_LOG_DIM, RaBitFactor};
 
 pub trait OperatorRaBitQ: Operator {
     type RabitQuantizationPreprocessed;
@@ -18,13 +18,9 @@ pub trait OperatorRaBitQ: Operator {
     fn query_vector_binarize_u64(vec: &[u8]) -> Vec<u64>;
     fn gen_random_orthogonal(dim: usize) -> Vec<Vec<Scalar<Self>>>;
     fn rabit_quantization_process(
-        x_centroid_square: Scalar<Self>,
-        factor_ppc: Scalar<Self>,
-        factor_ip: Scalar<Self>,
-        error_bound: Scalar<Self>,
-        binary_x: &[u64],
+        code: &RaBitFactor<Self>,
         p: &Self::RabitQuantizationPreprocessed,
-    ) -> (F32, F32);
+    ) -> F32;
     fn rabit_quantization_preprocess(
         dim: usize,
         vec: Borrowed<'_, Self>,
@@ -139,21 +135,17 @@ impl<O: Operator> OperatorRaBitQ for O {
     }
 
     fn rabit_quantization_process(
-        x_centroid_square: Scalar<Self>,
-        factor_ppc: Scalar<Self>,
-        factor_ip: Scalar<Self>,
-        error_bound: Scalar<Self>,
-        binary_x: &[u64],
+        code: &RaBitFactor<Self>,
         p: &Self::RabitQuantizationPreprocessed,
-    ) -> (F32, F32) {
-        let estimate = x_centroid_square
+    ) -> F32 {
+        let estimate = code.distance_square
             + p.0
-            + p.1 * factor_ppc
-            + (Scalar::<O>::from_f32(2.0 * asymmetric_binary_dot_product(binary_x, &p.4) as f32)
+            + p.1 * code.factor_ppc
+            + (Scalar::<O>::from_f32(2.0 * asymmetric_binary_dot_product(&code.binary_vec, &p.4) as f32)
                 - p.3)
-                * factor_ip
+                * code.factor_ip
                 * p.2;
-        (estimate.to_f(), (error_bound * p.0.sqrt()).to_f())
+        (estimate - code.error_bound * p.0.sqrt()).to_f()
     }
 }
 

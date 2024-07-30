@@ -2,7 +2,6 @@ use base::scalar::F32;
 use base::search::Reranker;
 use common::always_equal::AlwaysEqual;
 use std::cmp::Reverse;
-use std::collections::BTreeSet;
 use std::collections::BinaryHeap;
 
 pub struct ErrorBasedReranker<T, C, R> {
@@ -28,14 +27,13 @@ impl<T, C, R> ErrorBasedReranker<T, C, R> {
 
 impl<T, C, R, E> Reranker<T, E> for ErrorBasedReranker<T, C, R>
 where
-    C: Fn(u32, E) -> (F32 /* rough_u */, F32 /* error_u */),
+    C: Fn(u32, E) -> F32,
     R: Fn(u32) -> (F32, T),
     E: 'static,
 {
     fn push(&mut self, u: u32, extra: E) {
-        let (rough_u, error_u) = (self.compute)(u, extra);
-        let lowerbound_u = rough_u - error_u;
-        self.heap.push((Reverse(lowerbound_u), u));
+        let lowerbound = (self.compute)(u, extra);
+        self.heap.push((Reverse(lowerbound), u));
     }
 
     fn pop(&mut self) -> Option<(F32, u32, T)> {

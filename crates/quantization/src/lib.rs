@@ -10,7 +10,7 @@ pub mod scalar;
 pub mod trivial;
 
 use self::product::ProductQuantizer;
-use self::rabitq::RaBitQuantizer;
+use self::rabitq::{RaBitQuantizer, RaBitFactor};
 use self::scalar::ScalarQuantizer;
 use crate::operator::OperatorQuantization;
 use base::index::*;
@@ -31,6 +31,7 @@ pub enum Quantizer<O: OperatorQuantization> {
     Trivial(TrivialQuantizer<O>),
     Scalar(ScalarQuantizer<O>),
     Product(ProductQuantizer<O>),
+    #[serde(rename = "rabitq")]
     RaBitQ(RaBitQuantizer<O>),
 }
 
@@ -81,6 +82,7 @@ pub enum QuantizationPreprocessed<O: OperatorQuantization> {
 pub struct Quantization<O: OperatorQuantization> {
     train: Json<Quantizer<O>>,
     codes: MmapArray<u8>,
+    factors: MmapArray<RaBitFactor<O>>,
 }
 
 impl<O: OperatorQuantization> Quantization<O> {
@@ -110,13 +112,25 @@ impl<O: OperatorQuantization> Quantization<O> {
                 RaBitQ(_) => Box::new(std::iter::empty()) as Box<dyn Iterator<Item = u8>>,
             },
         );
-        Self { train, codes }
+        let factors = MmapArray::create(
+            path.as_ref().join("factors"),
+            match &*train {
+                RaBitQ(x) => Box::new(
+                    (0..vectors.len())
+                        .map(|i| x.encode(&transform(vectors.vector(i)).as_borrowed().to_vec()))
+                ),
+                _ => Box::new(std::iter::empty()) as Box<dyn Iterator<Item = RaBitFactor<O>>>,
+            }
+        );
+
+        Self { train, codes, factors }
     }
 
     pub fn open(path: impl AsRef<Path>) -> Self {
         let train = Json::open(path.as_ref().join("train"));
         let codes = MmapArray::open(path.as_ref().join("codes"));
-        Self { train, codes }
+        let factors = MmapArray::open(path.as_ref().join("factors"));
+        Self { train, codes, factors }
     }
 
     pub fn preprocess(&self, lhs: Borrowed<'_, O>) -> QuantizationPreprocessed<O> {
@@ -258,7 +272,12 @@ impl<O: OperatorQuantization> Quantization<O> {
                 },
                 r,
             ),
-            RaBitQ(x) => x.ivf_residual_rerank(vectors, opts, r),
+            RaBitQ(x) => x.ivf_residual_rerank(
+                vectors,
+                opts,
+                |u| &self.factors[u as usize],
+                r,
+            ),
         }
     }
 
