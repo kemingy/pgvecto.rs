@@ -123,9 +123,14 @@ fn from_nothing<O: Op>(
         }
         projection
     };
-    let samples = common::sample::sample_cast(collection);
-    rayon::check();
-    let centroids: Vec2<F32> = k_means(nlist as usize, samples, false);
+    let centroids: Vec2<F32> = match std::env::var("RABITQ_CENTROID") {
+        Ok(val) => load_centroids_from_fvecs(Path::new(&val)),
+        Err(_) => {
+            let samples = common::sample::sample_cast(collection);
+            rayon::check();
+            k_means(nlist as usize, samples, false)
+        }
+    };
     rayon::check();
     let mut ls = vec![Vec::new(); nlist as usize];
     for i in 0..collection.len() {
@@ -200,4 +205,38 @@ fn select<T: Ord>(mut lists: Vec<T>, n: usize) -> Vec<T> {
     lists.select_nth_unstable(n - 1);
     lists.truncate(n);
     lists
+}
+
+fn read_vecs<T>(path: impl AsRef<Path>) -> std::io::Result<Vec<Vec<T>>>
+where
+    T: Sized + num_traits::FromBytes<Bytes = [u8; 4]>,
+{
+    use std::io::Read;
+
+    let file = std::fs::File::open(path)?;
+    let mut reader = std::io::BufReader::new(file);
+    let mut buf = [0u8; 4];
+    let mut count: usize;
+    let mut vecs = Vec::new();
+    loop {
+        count = reader.read(&mut buf)?;
+        if count == 0 {
+            break;
+        }
+        let dim = u32::from_le_bytes(buf) as usize;
+        let mut vec = Vec::with_capacity(dim);
+        for _ in 0..dim {
+            reader.read_exact(&mut buf)?;
+            vec.push(T::from_le_bytes(&buf));
+        }
+        vecs.push(vec);
+    }
+    Ok(vecs)
+}
+
+fn load_centroids_from_fvecs(path: impl AsRef<Path>) -> Vec2<F32> {
+    let fvecs = read_vecs::<f32>(&path).expect("read centroids error");
+    let nlist = fvecs.len();
+    let dims = fvecs[0].len();
+    Vec2::from_vec((nlist, dims), fvecs.into_iter().flatten().map(F32).collect())
 }
